@@ -4,6 +4,9 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Agent, getAgent, startAgent, stopAgent, deleteAgent, getLogsUrl } from '@/lib/api';
 import StatusBadge from '@/components/StatusBadge';
+import CompensationMappings from '@/components/CompensationMappings';
+
+type Tab = 'details' | 'logs' | 'compensation';
 
 export default function AgentDetailPage() {
   const params = useParams();
@@ -14,6 +17,7 @@ export default function AgentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<string[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('details');
   const logsEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -123,6 +127,12 @@ export default function AgentDetailPage() {
   const isStopped = agent.status === 'stopped' || agent.status === 'failed';
   const isProcessing = ['pending', 'cloning', 'building'].includes(agent.status);
 
+  const tabs = [
+    { id: 'details' as Tab, label: 'Details' },
+    { id: 'logs' as Tab, label: 'Logs' },
+    { id: 'compensation' as Tab, label: 'Compensation' },
+  ];
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -167,80 +177,110 @@ export default function AgentDetailPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">Details</h2>
-          <dl className="space-y-3">
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Repository</dt>
-              <dd className="text-sm text-gray-900">
-                <a href={agent.repo_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                  {agent.repo_url}
-                </a>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Branch</dt>
-              <dd className="text-sm text-gray-900">{agent.branch}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Port</dt>
-              <dd className="text-sm text-gray-900">
-                {agent.port > 0 && isRunning ? (
-                  <a href={`http://localhost:${agent.port}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                    {agent.port}
-                  </a>
-                ) : (
-                  agent.port || 'Not assigned'
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Container ID</dt>
-              <dd className="text-sm text-gray-900 font-mono">{agent.container_id || 'None'}</dd>
-            </div>
-            <div>
-              <dt className="text-sm font-medium text-gray-500">Created</dt>
-              <dd className="text-sm text-gray-900">{new Date(agent.created_at).toLocaleString()}</dd>
-            </div>
-            {agent.error && (
+      {/* Tabs */}
+      <div className="border-b border-gray-200 mb-6">
+        <nav className="flex gap-4">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`py-3 px-1 border-b-2 font-medium text-sm ${
+                activeTab === tab.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'details' && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold mb-4">Agent Details</h2>
+            <dl className="space-y-3">
               <div>
-                <dt className="text-sm font-medium text-red-500">Error</dt>
-                <dd className="text-sm text-red-700">{agent.error}</dd>
+                <dt className="text-sm font-medium text-gray-500">Repository</dt>
+                <dd className="text-sm text-gray-900">
+                  <a href={agent.repo_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    {agent.repo_url}
+                  </a>
+                </dd>
               </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Branch</dt>
+                <dd className="text-sm text-gray-900">{agent.branch}</dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Port</dt>
+                <dd className="text-sm text-gray-900">
+                  {agent.port > 0 && isRunning ? (
+                    <a href={`http://localhost:${agent.port}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                      {agent.port}
+                    </a>
+                  ) : (
+                    agent.port || 'Not assigned'
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Container ID</dt>
+                <dd className="text-sm text-gray-900 font-mono">{agent.container_id || 'None'}</dd>
+              </div>
+              <div>
+                <dt className="text-sm font-medium text-gray-500">Created</dt>
+                <dd className="text-sm text-gray-900">{new Date(agent.created_at).toLocaleString()}</dd>
+              </div>
+              {agent.error && (
+                <div>
+                  <dt className="text-sm font-medium text-red-500">Error</dt>
+                  <dd className="text-sm text-red-700">{agent.error}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold mb-4">Environment Variables</h2>
+            {agent.env_content ? (
+              <pre className="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto font-mono">
+                {agent.env_content}
+              </pre>
+            ) : (
+              <p className="text-gray-500">No environment variables configured</p>
             )}
-          </dl>
+          </div>
         </div>
+      )}
 
+      {activeTab === 'logs' && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold mb-4">Environment Variables</h2>
-          {agent.env_content ? (
-            <pre className="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto font-mono">
-              {agent.env_content}
-            </pre>
-          ) : (
-            <p className="text-gray-500">No environment variables configured</p>
-          )}
+          <h2 className="text-lg font-semibold mb-4">Container Logs</h2>
+          <div className="bg-gray-900 text-gray-100 p-4 rounded-lg h-[500px] overflow-y-auto font-mono text-sm">
+            {logs.length === 0 ? (
+              <p className="text-gray-500">
+                {isRunning ? 'Waiting for logs...' : 'Start the agent to view logs'}
+              </p>
+            ) : (
+              logs.map((log, index) => (
+                <div key={index} className="whitespace-pre-wrap">
+                  {log}
+                </div>
+              ))
+            )}
+            <div ref={logsEndRef} />
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="mt-6 bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold mb-4">Logs</h2>
-        <div className="bg-gray-900 text-gray-100 p-4 rounded-lg h-96 overflow-y-auto font-mono text-sm">
-          {logs.length === 0 ? (
-            <p className="text-gray-500">
-              {isRunning ? 'Waiting for logs...' : 'Start the agent to view logs'}
-            </p>
-          ) : (
-            logs.map((log, index) => (
-              <div key={index} className="whitespace-pre-wrap">
-                {log}
-              </div>
-            ))
-          )}
-          <div ref={logsEndRef} />
+      {activeTab === 'compensation' && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <CompensationMappings agentId={id} />
         </div>
-      </div>
+      )}
     </div>
   );
 }
