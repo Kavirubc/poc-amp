@@ -1,161 +1,35 @@
 """
-Travel Booking Agent with Compensatable Tools
+Travel Booking Agent - Simple Version (No AMP Integration)
 
-This agent demonstrates the AMP compensation system with:
-- book_flight / cancel_flight (compensatable pair)
-- create_reservation / cancel_reservation (compensatable pair)
-- send_confirmation_email (no compensator - will be skipped during rollback)
+This agent demonstrates a typical AI agent that:
+- Books flights
+- Creates hotel reservations
+- Sends confirmation emails
+
+It has NO knowledge of AMP or compensation - the eBPF agent will
+automatically capture and analyze its HTTP traffic.
 """
 
-import os
 import uuid
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# In-memory storage for demo
+# In-memory storage
 bookings: Dict[str, dict] = {}
 reservations: Dict[str, dict] = {}
 emails_sent: List[dict] = []
 
-# AMP Configuration
-AMP_URL = os.getenv("AMP_URL", "http://backend:8080")
-AGENT_ID = os.getenv("AGENT_ID", "")
-
-# Tool schemas for registration with AMP
-TOOLS = [
-    {
-        "name": "book_flight",
-        "description": "Books a flight reservation for a passenger",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "flight_id": {"type": "string", "description": "Flight identifier"},
-                "passenger_name": {"type": "string", "description": "Passenger full name"},
-                "seat_class": {"type": "string", "enum": ["economy", "business", "first"]}
-            },
-            "required": ["flight_id", "passenger_name"]
-        }
-    },
-    {
-        "name": "cancel_flight",
-        "description": "Cancels an existing flight booking",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "booking_id": {"type": "string", "description": "Booking ID to cancel"}
-            },
-            "required": ["booking_id"]
-        }
-    },
-    {
-        "name": "create_reservation",
-        "description": "Creates a hotel reservation",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "hotel_id": {"type": "string", "description": "Hotel identifier"},
-                "guest_name": {"type": "string", "description": "Guest full name"},
-                "check_in": {"type": "string", "description": "Check-in date (YYYY-MM-DD)"},
-                "check_out": {"type": "string", "description": "Check-out date (YYYY-MM-DD)"},
-                "room_type": {"type": "string", "enum": ["standard", "deluxe", "suite"]}
-            },
-            "required": ["hotel_id", "guest_name", "check_in", "check_out"]
-        }
-    },
-    {
-        "name": "cancel_reservation",
-        "description": "Cancels an existing hotel reservation",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "reservation_id": {"type": "string", "description": "Reservation ID to cancel"}
-            },
-            "required": ["reservation_id"]
-        }
-    },
-    {
-        "name": "send_confirmation_email",
-        "description": "Sends a confirmation email to the customer (cannot be undone)",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "to_email": {"type": "string", "description": "Recipient email address"},
-                "subject": {"type": "string", "description": "Email subject"},
-                "booking_details": {"type": "object", "description": "Booking details to include"}
-            },
-            "required": ["to_email", "subject"]
-        }
-    }
-]
-
-
-def register_tools_with_amp():
-    """Register tools with AMP platform for compensation analysis."""
-    if not AGENT_ID:
-        logger.warning("AGENT_ID not set, skipping AMP registration")
-        return
-
-    try:
-        response = requests.post(
-            f"{AMP_URL}/api/v1/agents/{AGENT_ID}/tools",
-            json={"tools": TOOLS},
-            timeout=30
-        )
-        response.raise_for_status()
-        result = response.json()
-        logger.info(f"Registered {len(TOOLS)} tools with AMP")
-        logger.info(f"Suggested mappings: {result.get('suggested_mappings', [])}")
-        return result
-    except Exception as e:
-        logger.error(f"Failed to register tools with AMP: {e}")
-        return None
-
-
-def log_transaction(tool_name: str, input_params: dict, output_result: dict):
-    """Log a tool execution to AMP for transaction tracking."""
-    if not AGENT_ID:
-        return
-
-    try:
-        requests.post(
-            f"{AMP_URL}/api/v1/agents/{AGENT_ID}/transactions",
-            json={
-                "session_id": os.getenv("SESSION_ID", str(uuid.uuid4())),
-                "tool_name": tool_name,
-                "input": input_params,
-                "output": output_result
-            },
-            timeout=10
-        )
-        logger.debug(f"Logged transaction: {tool_name}")
-    except Exception as e:
-        logger.warning(f"Failed to log transaction: {e}")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Register tools on startup."""
-    register_tools_with_amp()
-    yield
-
-
 app = FastAPI(
     title="Travel Booking Agent",
-    description="Demo agent with compensatable tools for AMP testing",
-    version="1.0.0",
-    lifespan=lifespan
+    description="Simple travel agent - no AMP integration",
+    version="2.0.0"
 )
 
 
@@ -213,10 +87,10 @@ class EmailResponse(BaseModel):
     sent_at: str
 
 
-# Tool Endpoints
+# Tool Endpoints - These will be automatically captured by eBPF agent
 @app.post("/tools/book_flight", response_model=FlightBookingResponse)
 async def book_flight(request: FlightBookingRequest):
-    """Book a flight - creates a compensatable transaction."""
+    """Book a flight."""
     booking_id = f"BK-{uuid.uuid4().hex[:8].upper()}"
 
     booking = {
@@ -231,19 +105,12 @@ async def book_flight(request: FlightBookingRequest):
     bookings[booking_id] = booking
     logger.info(f"Flight booked: {booking_id}")
 
-    # Log to AMP
-    log_transaction(
-        "book_flight",
-        request.model_dump(),
-        booking
-    )
-
     return FlightBookingResponse(**booking)
 
 
 @app.post("/tools/cancel_flight")
 async def cancel_flight(request: CancelRequest):
-    """Cancel a flight booking - compensates book_flight."""
+    """Cancel a flight booking."""
     booking_id = request.booking_id
 
     if not booking_id or booking_id not in bookings:
@@ -255,19 +122,12 @@ async def cancel_flight(request: CancelRequest):
 
     logger.info(f"Flight cancelled: {booking_id}")
 
-    # Log to AMP
-    log_transaction(
-        "cancel_flight",
-        {"booking_id": booking_id},
-        {"status": "cancelled", "booking_id": booking_id}
-    )
-
     return {"status": "cancelled", "booking_id": booking_id}
 
 
 @app.post("/tools/create_reservation", response_model=ReservationResponse)
 async def create_reservation(request: ReservationRequest):
-    """Create a hotel reservation - creates a compensatable transaction."""
+    """Create a hotel reservation."""
     reservation_id = f"RES-{uuid.uuid4().hex[:8].upper()}"
 
     reservation = {
@@ -284,19 +144,12 @@ async def create_reservation(request: ReservationRequest):
     reservations[reservation_id] = reservation
     logger.info(f"Reservation created: {reservation_id}")
 
-    # Log to AMP
-    log_transaction(
-        "create_reservation",
-        request.model_dump(),
-        reservation
-    )
-
     return ReservationResponse(**reservation)
 
 
 @app.post("/tools/cancel_reservation")
 async def cancel_reservation(request: CancelRequest):
-    """Cancel a hotel reservation - compensates create_reservation."""
+    """Cancel a hotel reservation."""
     reservation_id = request.reservation_id
 
     if not reservation_id or reservation_id not in reservations:
@@ -307,13 +160,6 @@ async def cancel_reservation(request: CancelRequest):
     reservation["cancelled_at"] = datetime.utcnow().isoformat()
 
     logger.info(f"Reservation cancelled: {reservation_id}")
-
-    # Log to AMP
-    log_transaction(
-        "cancel_reservation",
-        {"reservation_id": reservation_id},
-        {"status": "cancelled", "reservation_id": reservation_id}
-    )
 
     return {"status": "cancelled", "reservation_id": reservation_id}
 
@@ -334,13 +180,6 @@ async def send_confirmation_email(request: EmailRequest):
 
     emails_sent.append(email)
     logger.info(f"Email sent: {message_id} to {request.to_email}")
-
-    # Log to AMP
-    log_transaction(
-        "send_confirmation_email",
-        request.model_dump(),
-        {"message_id": message_id, "status": "sent"}
-    )
 
     return EmailResponse(**email)
 
@@ -432,9 +271,16 @@ async def root():
     """Root endpoint with API info."""
     return {
         "name": "Travel Booking Agent",
-        "version": "1.0.0",
-        "description": "Demo agent with compensatable tools for AMP testing",
-        "tools": [t["name"] for t in TOOLS],
+        "version": "2.0.0",
+        "description": "Simple travel agent - eBPF will capture traffic automatically",
+        "note": "This agent has NO AMP integration - all traffic capture is passive via eBPF",
+        "tools": [
+            "book_flight",
+            "cancel_flight",
+            "create_reservation",
+            "cancel_reservation",
+            "send_confirmation_email"
+        ],
         "endpoints": {
             "book_flight": "POST /tools/book_flight",
             "cancel_flight": "POST /tools/cancel_flight",

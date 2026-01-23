@@ -327,6 +327,12 @@ Note: Steps are in **LIFO order** (last transaction first).
 
 ## eBPF Integration
 
+> **CRITICAL INSIGHT**: The SDK-based approach (requiring agents to use `amp-instrumentation`) is useful for demonstration but **will not work in production**. Real agents are built with various frameworks (LangChain, CrewAI, AutoGen, custom code) and developers will not modify their code to integrate with AMP.
+>
+> **The solution is eBPF-based automatic instrumentation** - intercepting HTTP traffic at the kernel level to automatically discover tools, log transactions, and execute compensations without any agent code changes.
+>
+> See [docs/EBPF_AUTO_INSTRUMENTATION.md](docs/EBPF_AUTO_INSTRUMENTATION.md) for the full architecture.
+
 ### Why eBPF?
 
 Traditional agent monitoring relies on **self-reporting** - agents tell the platform what they're doing. This has fundamental limitations:
@@ -522,6 +528,67 @@ labels:
 ```
 
 The eBPF programs use these labels (via cgroup mapping) to filter events to only AMP-managed agents.
+
+### Zero-Instrumentation vs SDK Approach
+
+| Aspect | SDK Approach (Current POC) | eBPF Approach (Production) |
+|--------|---------------------------|---------------------------|
+| **Agent Code Changes** | Required - must import SDK | **None** |
+| **Framework Support** | Manual integration per framework | **All frameworks automatically** |
+| **Trust Model** | Trust agent self-reporting | **Kernel-level verification** |
+| **Tool Coverage** | Only explicitly wrapped tools | **All HTTP/API traffic** |
+| **Malicious Agents** | Can lie about actions | **Cannot evade kernel hooks** |
+| **Deployment** | Per-agent configuration | **Platform-wide, automatic** |
+| **Compensation Discovery** | Manual tool registration | **Automatic from traffic patterns** |
+
+### Production Architecture (eBPF-based)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Agent Container (NO CODE CHANGES)                     │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  Any Agent Code - LangChain, CrewAI, Custom, etc.               │   │
+│  │                                                                  │   │
+│  │  # Standard Python code - no AMP SDK needed                     │   │
+│  │  response = requests.post("https://api.airline.com/book",       │   │
+│  │                           json={"flight_id": "UA-123"})         │   │
+│  └──────────────────────────────┬──────────────────────────────────┘   │
+│                                 │                                       │
+│                          HTTP Traffic                                   │
+│                                 │                                       │
+└─────────────────────────────────┼───────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         eBPF Layer (Kernel)                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐ │
+│  │ TC/XDP Hook │  │ SSL Probes  │  │ Container ID Filter             │ │
+│  │ (HTTP cap)  │  │ (HTTPS cap) │  │ (amp.managed=true only)         │ │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────────────────────────┘ │
+│         └────────────────┴────────────────┐                             │
+│                                           │                             │
+│                              Ring Buffer (Events)                       │
+└───────────────────────────────────────────┼─────────────────────────────┘
+                                            │
+                                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       eBPF Agent (Userspace Go)                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────────┐ │
+│  │ HTTP Parser │  │ LLM Tool    │  │ Transaction │  │ Compensation  │ │
+│  │             │  │ Classifier  │  │ Logger      │  │ Executor      │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └───────────────┘ │
+│                                           │                             │
+└───────────────────────────────────────────┼─────────────────────────────┘
+                                            │
+                                            ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           AMP Backend                                    │
+│  - Auto-discovered tool schemas (from traffic)                          │
+│  - Suggested compensation mappings (LLM + pattern analysis)             │
+│  - Human approval workflow (unchanged)                                   │
+│  - Rollback execution (HTTP replay)                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ### Implementation Approach
 
@@ -722,9 +789,36 @@ curl "http://localhost:8080/api/v1/agents/$AGENT_ID/sessions/test-session/rollba
 
 ---
 
+## POC vs Production
+
+### What This POC Demonstrates
+
+| Component | POC Status | Purpose |
+|-----------|------------|---------|
+| Agent Deployment | ✅ Working | Docker-based lifecycle management |
+| Tool Registration | ✅ Working | SDK-based (for demo only) |
+| Heuristic Matching | ✅ Working | `book_` → `cancel_` patterns |
+| LLM Suggestions | ✅ Working | Gemini-based analysis |
+| Human Approval | ✅ Working | UI for approve/reject |
+| Transaction Logging | ✅ Working | SDK-based (for demo only) |
+| Rollback Plans | ✅ Working | LIFO with parameter extraction |
+| **eBPF Interception** | ❌ Not Yet | **Required for production** |
+
+### What Production Needs (eBPF)
+
+```
+POC Flow (SDK-based):
+Agent Code → [MUST add SDK] → AMP API → Database
+
+Production Flow (eBPF-based):
+Agent Code → [NO CHANGES] → Kernel eBPF → AMP Backend → Database
+```
+
+The POC validates the **compensation logic** (mapping discovery, approval, rollback). Production adds the **automatic capture layer** via eBPF so agents don't need modification.
+
 ## Future Enhancements
 
-### Phase 1: eBPF Integration (Next)
+### Phase 1: eBPF Integration (Next - CRITICAL)
 
 1. **eBPF Agent** - Separate service for kernel-level monitoring
 2. **Event Correlation** - Match eBPF events to transaction logs

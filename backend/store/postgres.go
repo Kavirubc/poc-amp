@@ -136,3 +136,117 @@ func (s *Store) GetUsedPorts() ([]int, error) {
 	}
 	return ports, nil
 }
+
+// Transaction methods (for eBPF agent)
+
+func (s *Store) SaveTransaction(tx *models.Transaction) error {
+	query := `
+		INSERT INTO transactions (id, agent_id, session_id, tool_name, input, output, status, started_at, completed_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (id) DO UPDATE SET
+			output = EXCLUDED.output,
+			status = EXCLUDED.status,
+			completed_at = EXCLUDED.completed_at
+	`
+	_, err := s.db.Exec(query,
+		tx.ID, tx.AgentID, tx.SessionID, tx.ToolName, tx.Input, tx.Output,
+		tx.Status, tx.StartedAt, tx.CompletedAt, tx.CreatedAt,
+	)
+	return err
+}
+
+func (s *Store) ListTransactions(agentID string) ([]*models.Transaction, error) {
+	query := `
+		SELECT id, agent_id, session_id, tool_name, input, output, status, started_at, completed_at, created_at
+		FROM transactions WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 100
+	`
+	rows, err := s.db.Query(query, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []*models.Transaction
+	for rows.Next() {
+		tx := &models.Transaction{}
+		err := rows.Scan(
+			&tx.ID, &tx.AgentID, &tx.SessionID, &tx.ToolName, &tx.Input, &tx.Output,
+			&tx.Status, &tx.StartedAt, &tx.CompletedAt, &tx.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		txs = append(txs, tx)
+	}
+	return txs, nil
+}
+
+// Tool methods (for eBPF agent)
+
+func (s *Store) SaveTool(tool *models.Tool) error {
+	query := `
+		INSERT INTO tools (id, agent_id, name, description, endpoint, input_schema, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (agent_id, name) DO UPDATE SET
+			description = EXCLUDED.description,
+			endpoint = EXCLUDED.endpoint,
+			input_schema = EXCLUDED.input_schema,
+			updated_at = EXCLUDED.updated_at
+	`
+	_, err := s.db.Exec(query,
+		tool.ID, tool.AgentID, tool.Name, tool.Description, tool.Endpoint, tool.InputSchema,
+		tool.CreatedAt, tool.UpdatedAt,
+	)
+	return err
+}
+
+// SaveCompensationMappingFromEBPF creates a new compensation mapping from eBPF discovery
+func (s *Store) SaveCompensationMappingFromEBPF(agentID string, req *models.DiscoverCompensationRequest) (string, error) {
+	id := fmt.Sprintf("cm-%d", time.Now().UnixNano())
+
+	// Map suggestion source
+	suggestedBy := models.SuggestionHeuristic
+	if req.SuggestedBy == "llm" {
+		suggestedBy = models.SuggestionLLM
+	} else if req.SuggestedBy == "manual" {
+		suggestedBy = models.SuggestionManual
+	}
+
+	query := `
+		INSERT INTO compensation_mappings (id, agent_id, tool_name, compensator_name, parameter_mapping, status, suggested_by, confidence, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (agent_id, tool_name) DO NOTHING
+	`
+	_, err := s.db.Exec(query,
+		id, agentID, req.ToolName, req.CompensatorName, req.ParameterMapping,
+		models.MappingStatusPending, suggestedBy, 0.7, time.Now(), time.Now(),
+	)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// ApproveCompensationMappingByID approves or rejects a compensation mapping
+func (s *Store) ApproveCompensationMappingByID(agentID, mappingID string, approved bool) error {
+	status := "approved"
+	if !approved {
+		status = "rejected"
+	}
+
+	query := `
+		UPDATE compensation_mappings SET status = $3, reviewed_at = $4, updated_at = $4
+		WHERE id = $1 AND agent_id = $2
+	`
+	result, err := s.db.Exec(query, mappingID, agentID, status, time.Now())
+	if err != nil {
+		return err
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("mapping not found")
+	}
+
+	return nil
+}

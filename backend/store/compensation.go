@@ -105,8 +105,13 @@ func (s *Store) GetCompensationMappingByTool(agentID, toolName string) (*models.
 
 func (s *Store) ListCompensationMappings(agentID string) ([]*models.CompensationMapping, error) {
 	query := `
-		SELECT id, agent_id, tool_name, tool_schema, tool_description, compensator_name,
-		       parameter_mapping, status, suggested_by, confidence, reasoning,
+		SELECT id, agent_id, tool_name,
+		       COALESCE(tool_schema, '{}') as tool_schema,
+		       COALESCE(tool_description, '') as tool_description,
+		       COALESCE(compensator_name, '') as compensator_name,
+		       COALESCE(parameter_mapping, '{}') as parameter_mapping,
+		       status, suggested_by, confidence,
+		       COALESCE(reasoning, '') as reasoning,
 		       reviewed_by, reviewed_at, created_at, updated_at
 		FROM compensation_mappings WHERE agent_id = $1
 		ORDER BY created_at DESC
@@ -166,8 +171,13 @@ func (s *Store) UpdateCompensationMapping(m *models.CompensationMapping) error {
 
 func (s *Store) GetApprovedMappings(agentID string) ([]*models.CompensationMapping, error) {
 	query := `
-		SELECT id, agent_id, tool_name, tool_schema, tool_description, compensator_name,
-		       parameter_mapping, status, suggested_by, confidence, reasoning,
+		SELECT id, agent_id, tool_name,
+		       COALESCE(tool_schema, '{}') as tool_schema,
+		       COALESCE(tool_description, '') as tool_description,
+		       COALESCE(compensator_name, '') as compensator_name,
+		       COALESCE(parameter_mapping, '{}') as parameter_mapping,
+		       status, suggested_by, confidence,
+		       COALESCE(reasoning, '') as reasoning,
 		       reviewed_by, reviewed_at, created_at, updated_at
 		FROM compensation_mappings
 		WHERE agent_id = $1 AND status = 'approved'

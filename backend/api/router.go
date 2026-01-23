@@ -28,6 +28,7 @@ func NewRouter(agentService *services.AgentService, suggestionService *services.
 
 	agentHandler := handlers.NewAgentHandler(agentService)
 	compensationHandler := handlers.NewCompensationHandler(db, suggestionService, recoveryService)
+	transactionHandler := handlers.NewTransactionHandler(db)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
@@ -55,6 +56,10 @@ func NewRouter(agentService *services.AgentService, suggestionService *services.
 			// Rollback
 			r.Get("/{id}/sessions/{sessionId}/rollback-plan", compensationHandler.GetRollbackPlan)
 			r.Post("/{id}/sessions/{sessionId}/rollback", compensationHandler.ExecuteRollback)
+
+			// eBPF agent endpoints
+			r.Post("/{id}/compensation-mappings/discover", transactionHandler.DiscoverCompensation)
+			r.Post("/{id}/compensation-mappings/{mappingId}/approve", transactionHandler.ApproveCompensation)
 		})
 
 		// Compensation mapping management (cross-agent)
