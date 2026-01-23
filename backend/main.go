@@ -54,7 +54,12 @@ func main() {
 		cfg.PortRangeEnd,
 	)
 
-	router := api.NewRouter(agentService)
+	// Initialize compensation services
+	suggestionService := services.NewSuggestionService(db)
+	recoveryService := services.NewRecoveryService(db)
+	log.Printf("Compensation services initialized")
+
+	router := api.NewRouter(agentService, suggestionService, recoveryService, db)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.ServerPort,
