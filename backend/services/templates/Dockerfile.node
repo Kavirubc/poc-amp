@@ -1,0 +1,13 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --production 2>/dev/null || true
+
+COPY . .
+
+ENV PORT=8000
+EXPOSE 8000
+
+CMD ["sh", "-c", "if [ -f server.js ]; then node server.js; elif [ -f index.js ]; then node index.js; elif [ -f app.js ]; then node app.js; else npm start; fi"]
