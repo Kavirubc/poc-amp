@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
@@ -213,7 +214,7 @@ func (d *DockerService) RemoveContainer(ctx context.Context, containerID string)
 }
 
 func (d *DockerService) RemoveImage(ctx context.Context, imageID string) error {
-	_, err := d.client.ImageRemove(ctx, imageID, types.ImageRemoveOptions{Force: true})
+	_, err := d.client.ImageRemove(ctx, imageID, image.RemoveOptions{Force: true})
 	return err
 }
 
