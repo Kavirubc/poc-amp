@@ -32,20 +32,21 @@ func NewSuggestionService(store *store.Store) *SuggestionService {
 
 // Heuristic patterns for compensation
 var undoPrefixes = map[string]string{
-	"book_":     "cancel_",
-	"create_":   "delete_",
-	"add_":      "remove_",
-	"insert_":   "delete_",
-	"reserve_":  "cancel_",
-	"allocate_": "deallocate_",
-	"assign_":   "unassign_",
-	"start_":    "stop_",
-	"enable_":   "disable_",
-	"open_":     "close_",
-	"send_":     "recall_",
-	"publish_":  "unpublish_",
-	"activate_": "deactivate_",
-	"lock_":     "unlock_",
+	"book_":      "cancel_",
+	"create_":    "cancel_", // For reservations
+	"make_":      "cancel_",
+	"add_":       "remove_",
+	"insert_":    "delete_",
+	"reserve_":   "cancel_",
+	"allocate_":  "deallocate_",
+	"assign_":    "unassign_",
+	"start_":     "stop_",
+	"enable_":    "disable_",
+	"open_":      "close_",
+	"send_":      "recall_",
+	"publish_":   "unpublish_",
+	"activate_":  "deactivate_",
+	"lock_":      "unlock_",
 	"subscribe_": "unsubscribe_",
 }
 
@@ -195,18 +196,20 @@ func (s *SuggestionService) RegisterTools(agentID string, tools []models.ToolSch
 			continue
 		}
 
-		// Create new mapping
+		// Create new mapping with proper defaults
 		mapping := &models.CompensationMapping{
-			ID:        uuid.New().String(),
-			AgentID:   agentID,
-			ToolName:  tool.Name,
-			ToolDescription: tool.Description,
-			Status:    models.MappingStatusPending,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ID:               uuid.New().String(),
+			AgentID:          agentID,
+			ToolName:         tool.Name,
+			ToolDescription:  tool.Description,
+			ToolSchema:       json.RawMessage("{}"),
+			ParameterMapping: json.RawMessage("{}"),
+			Status:           models.MappingStatusPending,
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
 		}
 
-		if tool.InputSchema != nil {
+		if tool.InputSchema != nil && len(tool.InputSchema) > 0 {
 			mapping.ToolSchema = tool.InputSchema
 		}
 
@@ -230,7 +233,9 @@ func (s *SuggestionService) RegisterTools(agentID string, tools []models.ToolSch
 				mapping.SuggestedBy = models.SuggestionLLM
 				mapping.Confidence = suggestion.Confidence
 				mapping.Reasoning = suggestion.Reasoning
-				mapping.ParameterMapping = suggestion.ParameterMapping
+				if suggestion.ParameterMapping != nil && len(suggestion.ParameterMapping) > 0 {
+					mapping.ParameterMapping = suggestion.ParameterMapping
+				}
 			} else if err == nil && !suggestion.NeedsCompensation {
 				mapping.Status = models.MappingStatusNoCompensation
 				mapping.SuggestedBy = models.SuggestionLLM

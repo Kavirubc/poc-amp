@@ -37,3 +37,5 @@ workspace/*
 
 # Docker
 postgres_data/
+
+.claude/

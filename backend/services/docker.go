@@ -161,7 +161,10 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 			}
 		}
 	}
+	// Inject AMP-required environment variables
 	envVars = append(envVars, fmt.Sprintf("PORT=%d", 8000))
+	envVars = append(envVars, fmt.Sprintf("AGENT_ID=%s", agent.ID))
+	envVars = append(envVars, "AMP_URL=http://backend:8080")
 
 	config := &container.Config{
 		Image:        fmt.Sprintf("amp-agent-%s:latest", agent.ID),

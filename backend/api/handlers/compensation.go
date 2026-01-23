@@ -167,27 +167,29 @@ func (h *CompensationHandler) UpdateMapping(w http.ResponseWriter, r *http.Reque
 func (h *CompensationHandler) LogExecution(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "id")
 
-	var req models.ExecuteToolRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
-
-	req.AgentID = agentID
-
-	// For this endpoint, we receive the output separately
-	var fullReq struct {
+	var req struct {
 		SessionID string          `json:"session_id"`
 		ToolName  string          `json:"tool_name"`
 		Input     json.RawMessage `json:"input"`
 		Output    json.RawMessage `json:"output"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-	json.NewDecoder(r.Body).Decode(&fullReq)
 
-	log, err := h.recoveryService.LogToolExecution(agentID, fullReq.SessionID, fullReq.ToolName, fullReq.Input, fullReq.Output)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Ensure we have valid JSON for input and output
+	if req.Input == nil {
+		req.Input = json.RawMessage("{}")
+	}
+	if req.Output == nil {
+		req.Output = json.RawMessage("{}")
+	}
+
+	log, err := h.recoveryService.LogToolExecution(agentID, req.SessionID, req.ToolName, req.Input, req.Output)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondError(w, http.StatusInternalServerError, "failed to log execution: "+err.Error())
 		return
 	}
 
