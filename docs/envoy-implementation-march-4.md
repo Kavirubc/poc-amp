@@ -10,7 +10,7 @@ Instead of requiring agent developers to use a specific SDK, we use a **Transpar
 
 ## 2. Component Architecture
 
-The following diagram illustrates the flow of a single "Tool Call" from an agent to an external API (like Stripe or a Flight Booking system).
+The following diagram illustrates the high-level relationship between the Agent, Envoy sidecar, and the RC Management plane.
 
 ```mermaid
 graph TD
@@ -37,7 +37,7 @@ graph TD
     %% Network Flow
     AGENT -- "1. Tool Call (HTTPS)" --> ENVOY
     ENVOY -- "2. Decrypt & Inspect" --> LUA
-    ENVOY -- "3. Re-encrypt & Forward" --> EXT_API
+    ENVOY -- "3. Forward Re-encrypted" --> EXT_API
     
     LUA -- "4. Background POST (JSON)" --> INTERCEPTOR_API
     INTERCEPTOR_API -- "5. Sanitize & Store" --> DB
@@ -46,9 +46,74 @@ graph TD
     BACKEND -- "7. Generate Recovery Prompt" --> AGENT
 ```
 
+## 3. Detailed Data Flow Sequence
+
+This sequence diagram shows the exact timing and non-blocking nature of the interception.
+
+```mermaid
+sequenceDiagram
+    participant A as Autonomous Agent
+    participant E as Envoy (Sidecar)
+    participant S as External Service (e.g. Stripe)
+    participant B as Go Backend (Interceptor)
+    participant D as PostgreSQL
+
+    Note over A, E: Proxy variables (HTTP_PROXY) direct traffic
+    A->>E: HTTPS POST /v1/bookings (Encrypted)
+    Note over E: Envoy terminates TLS using Custom CA
+    E->>E: Lua Filter captures Request Body
+    
+    par Envoy to Internet
+        E->>S: Forward HTTPS POST (Original Payload)
+        S-->>E: HTTP 200 OK (Response Body)
+        E-->>A: Return Response to Agent (Transparent)
+    and Envoy to Management Plane
+        E->>B: Background POST /internal/envoy/transactions
+        B->>B: Sanitize & Flatten JSON
+        B->>D: INSERT INTO transaction_logs
+    end
+```
+
+## 4. Concrete Data Transformation Example
+
+To illustrate what happens to the data, let's follow a **Flight Booking** request.
+
+### Step 1: Raw Agent Request (Python code)
+The agent executes a tool call using a standard library:
+```python
+httpx.post("https://airline.com/api/book", json={"flight": "UA123", "user": "John"})
+```
+
+### Step 2: Envoy Interception (Lua Payload)
+Envoy captures the stream and prepares this JSON for the Backend. **Key Note**: Even though the traffic was HTTPS, Envoy sees it as plain text.
+```json
+{
+  "method": "POST",
+  "url": "https://airline.com/api/book",
+  "request_body": "{\"flight\": \"UA123\", \"user\": \"John\"}",
+  "response_body": "{\"status\": \"confirmed\", \"id\": \"BK-999\"}"
+}
+```
+
+### Step 3: Backend Processing (Sanitization)
+The Go Backend receives the POST from Envoy. It generates a unique ID and maps it to the `agent_id`.
+- **Generated ID**: `5f3a...`
+- **Tool Name**: `intercept_POST_https://airline.com/api/book`
+
+### Step 4: Final Database Record (PostgreSQL)
+The data is stored in a structured format ready for the recovery agent.
+
+| Field | Value |
+|-------|-------|
+| `id` | `5f3a...` |
+| `tool_name` | `intercept_POST_https://airline.com/api/book` |
+| `input_params` | `{"flight": "UA123", "user": "John"}` |
+| `output_result` | `{"status": "confirmed", "id": "BK-999"}` |
+| `status` | `executed` (logged automatically) |
+
 ---
 
-## 3. Core Implementation Details
+## 5. Core Implementation Details
 
 ### A. Transparent TLS Interception (The MITM)
 To intercept HTTPS traffic without secret keys from the destination (e.g., Google or Stripe), we implement a **Man-In-The-Middle (MITM)** pattern using a custom Root Certificate Authority.
@@ -84,7 +149,7 @@ Since the Lua script has limited logic, we built a robust "Bridge" in Go to hand
 
 ---
 
-## 4. Source File Registry
+## 6. Source File Registry
 
 | File Path | Responsibility |
 |-----------|----------------|
@@ -98,7 +163,7 @@ Since the Lua script has limited logic, we built a robust "Bridge" in Go to hand
 
 ---
 
-## 5. Life of a Intercepted Request
+## 7. Life of an Intercepted Request
 
 1.  **Agent Action**: The Python agent calls `httpx.post("https://api.stripe.com/v1/charges", ...)`.
 2.  **Proxy Redirect**: The OS routes this request to `envoy:10000` because of the `HTTPS_PROXY` env var.
@@ -108,7 +173,7 @@ Since the Lua script has limited logic, we built a robust "Bridge" in Go to hand
 6.  **Bridge Logging**: Simultaneously, the Lua script sends a JSON blob of the Stripe request/response to the Go Backend.
 7.  **Database Storage**: The Go Backend saves this to the `transaction_logs` table, linked to the `agent_id`.
 
-## 6. Forward Looking: Agentic Compensation
+## 8. Forward Looking: Agentic Compensation
 
 With this implementation complete, the "Agentic Compensation" flow becomes possible:
 - If a session fails, the Backend queries all `transaction_logs` for that session.
