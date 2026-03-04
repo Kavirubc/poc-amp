@@ -180,6 +180,7 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 	envVars = append(envVars, "HTTPS_PROXY=http://envoy:10000")
 	envVars = append(envVars, "REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
 	envVars = append(envVars, "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
+	envVars = append(envVars, "SSL_CERT_FILE=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
 
 	config := &container.Config{
 		Image:        fmt.Sprintf("amp-agent-%s:latest", agent.ID),
