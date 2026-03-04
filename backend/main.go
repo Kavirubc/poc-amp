@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,8 +12,10 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/poc-amp/backend/api"
 	"github.com/poc-amp/backend/config"
+	pb "github.com/poc-amp/backend/proto/v1"
 	"github.com/poc-amp/backend/services"
 	"github.com/poc-amp/backend/store"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -70,9 +73,26 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting server on port %s", cfg.ServerPort)
+		log.Printf("Starting HTTP server on port %s", cfg.ServerPort)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatalf("HTTP server failed: %v", err)
+		}
+	}()
+
+	// Start the gRPC Interceptor Server
+	grpcLis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("Failed to listen for gRPC on :50051: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	interceptorSvc := api.NewInterceptorServer(db)
+	pb.RegisterTransactionServiceServer(grpcServer, interceptorSvc)
+
+	go func() {
+		log.Printf("Starting gRPC interceptor server on :50051")
+		if err := grpcServer.Serve(grpcLis); err != nil {
+			log.Fatalf("gRPC server failed: %v", err)
 		}
 	}()
 

@@ -71,5 +71,10 @@ func NewRouter(agentService *services.AgentService, suggestionService *services.
 		})
 	})
 
+	// Internal ingress for Envoy sidecar
+	r.Route("/internal/envoy", func(r chi.Router) {
+		r.Post("/transactions", HandleEnvoyTransaction(NewInterceptorServer(db)))
+	})
+
 	return r
 }

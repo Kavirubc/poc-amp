@@ -47,6 +47,18 @@ func (s *Store) CreateAgent(agent *models.Agent) error {
 	return err
 }
 
+// EnsureEnvoyAgent upserts a synthetic sentinel agent row so that Envoy-intercepted
+// transaction logs satisfy the FK constraint on agent_id.
+func (s *Store) EnsureEnvoyAgent(agentID string) error {
+	query := `
+		INSERT INTO agents (id, name, repo_url, branch, type, status, created_at, updated_at)
+		VALUES ($1, $2, '', 'main', 'envoy-interceptor', 'running', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`
+	_, err := s.db.Exec(query, agentID, "Envoy Network Interceptor ("+agentID+")")
+	return err
+}
+
 func (s *Store) GetAgent(id string) (*models.Agent, error) {
 	query := `
 		SELECT id, name, repo_url, branch, type, status, port, container_id, image_id, env_content, error, created_at, updated_at

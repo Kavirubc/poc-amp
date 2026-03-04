@@ -51,6 +51,17 @@ services:
     networks:
       - amp-network
 
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+      - ./envoy/certs:/etc/envoy/certs:ro
+    ports:
+      - "10000:10000"
+      - "9901:9901"
+    networks:
+      - amp-network
+
   ebpf-agent:
     build:
       context: ./ebpf-agent

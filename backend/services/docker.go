@@ -90,6 +90,17 @@ func (d *DockerService) BuildImage(ctx context.Context, agentID, repoPath string
 	}
 	defer os.Remove(dockerfilePath)
 
+	caCertContent, err := templateFS.ReadFile("templates/ca.crt")
+	if err != nil {
+		return "", fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
+	caCertPath := filepath.Join(repoPath, "ca.crt")
+	if err := os.WriteFile(caCertPath, caCertContent, 0644); err != nil {
+		return "", fmt.Errorf("failed to write CA certificate: %w", err)
+	}
+	defer os.Remove(caCertPath)
+
 	tar, err := archive.TarWithOptions(repoPath, &archive.TarOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to create tar archive: %w", err)
@@ -165,6 +176,10 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 	envVars = append(envVars, fmt.Sprintf("PORT=%d", 8000))
 	envVars = append(envVars, fmt.Sprintf("AGENT_ID=%s", agent.ID))
 	envVars = append(envVars, "AMP_URL=http://backend:8080")
+	envVars = append(envVars, "HTTP_PROXY=http://envoy:10000")
+	envVars = append(envVars, "HTTPS_PROXY=http://envoy:10000")
+	envVars = append(envVars, "REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
+	envVars = append(envVars, "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
 
 	config := &container.Config{
 		Image:        fmt.Sprintf("amp-agent-%s:latest", agent.ID),

@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt* ./
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
 
+# Inject AMP Proxy CA Certificate
+COPY ca.crt /usr/local/share/ca-certificates/amp-proxy-ca.crt
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && update-ca-certificates
+
 COPY . .
 
 ENV PORT=8000
