@@ -160,6 +160,125 @@ static_resources:
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
+  # Transparent TLS listener — receives iptables DNAT traffic from agent containers
+  # Agent outbound HTTPS (port 443) is DNAT'd to this listener on port 10443
+  - name: transparent_tls_listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 10443
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            tls_certificates:
+            - certificate_chain:
+                filename: "/etc/envoy/certs/server.crt"
+              private_key:
+                filename: "/etc/envoy/certs/server.key"
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: transparent_https
+          route_config:
+            name: transparent_routes
+            virtual_hosts:
+            - name: all_transparent
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: dynamic_forward_proxy_cluster
+                typed_per_filter_config:
+                  envoy.filters.http.dynamic_forward_proxy:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.PerRouteConfig
+                    host_rewrite_header: ":authority"
+          http_filters:
+          - name: envoy.filters.http.buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+              max_request_bytes: 5242880 # 5MB limit
+          - name: envoy.filters.http.lua
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+              default_source_code:
+                inline_string: |
+                  -- Helper to properly escape a string for use inside a JSON string value
+                  local function json_escape(s)
+                    if s == nil then return "" end
+                    s = s:gsub('\\', '\\\\')
+                    s = s:gsub('"', '\\"')
+                    s = s:gsub('\n', '\\n')
+                    s = s:gsub('\r', '\\r')
+                    s = s:gsub('\t', '\\t')
+                    return s
+                  end
+
+                  function envoy_on_request(request_handle)
+                    local headers = request_handle:headers()
+                    request_handle:streamInfo():dynamicMetadata():set("lua", "request_method", headers:get(":method"))
+                    request_handle:streamInfo():dynamicMetadata():set("lua", "request_url", "https://" .. headers:get(":authority") .. headers:get(":path"))
+
+                    -- Capture source IP for agent identification
+                    local source_addr = request_handle:streamInfo():downstreamDirectRemoteAddress()
+                    request_handle:streamInfo():dynamicMetadata():set("lua", "source_ip", source_addr or "")
+
+                    local body = request_handle:body()
+                    local req_body = ""
+                    if body then
+                      req_body = body:getBytes(0, body:length())
+                    end
+                    request_handle:streamInfo():dynamicMetadata():set("lua", "request_body", req_body)
+                  end
+
+                  function envoy_on_response(response_handle)
+                    local meta = response_handle:streamInfo():dynamicMetadata():get("lua")
+                    local method = meta["request_method"] or "UNKNOWN"
+                    local url = meta["request_url"] or ""
+                    local req_body = meta["request_body"] or ""
+                    local source_ip = meta["source_ip"] or ""
+
+                    local status = response_handle:headers():get(":status") or "0"
+
+                    local body = response_handle:body()
+                    local res_body = ""
+                    if body then
+                      res_body = body:getBytes(0, body:length())
+                    end
+
+                    local payload = '{"agent_id":"' .. json_escape(source_ip) .. '","session_id":"iptables-session","method":"' .. json_escape(method) .. '","url":"' .. json_escape(url) .. '","request_body":"' .. json_escape(req_body) .. '","response_status":' .. status .. ',"response_body":"' .. json_escape(res_body) .. '","source_ip":"' .. json_escape(source_ip) .. '"}'
+
+                    response_handle:logInfo(">>> [transparent] Dispatching to backend: " .. method .. " " .. url .. " -> HTTP " .. status .. " (from " .. source_ip .. ")")
+
+                    local resp_headers, resp_body = response_handle:httpCall(
+                      "backend_cluster",
+                      {
+                        [":method"] = "POST",
+                        [":path"] = "/internal/envoy/transactions",
+                        [":authority"] = "backend",
+                        ["content-type"] = "application/json"
+                      },
+                      payload,
+                      5000)
+
+                    if resp_headers then
+                      response_handle:logInfo("<<< Backend response: " .. (resp_headers[":status"] or "nil"))
+                    end
+                  end
+          - name: envoy.filters.http.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+              dns_cache_config:
+                name: dfp_cache
+                dns_lookup_family: V4_ONLY
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
   clusters:
   - name: internal_tls_interception
     connect_timeout: 5s
@@ -209,3 +328,4 @@ static_resources:
               socket_address:
                 address: backend
                 port_value: 8080
+

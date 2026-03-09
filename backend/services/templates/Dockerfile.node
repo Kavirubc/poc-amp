@@ -2,12 +2,27 @@ FROM node:20-slim
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    iptables \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm install --production 2>/dev/null || true
+
+# Inject AMP Proxy CA Certificate
+COPY ca.crt /usr/local/share/ca-certificates/amp-proxy-ca.crt
+RUN update-ca-certificates
+
+# Inject AMP transparent proxy scripts
+COPY iptables-init.sh /usr/local/bin/iptables-init.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/iptables-init.sh /usr/local/bin/entrypoint.sh
 
 COPY . .
 
 ENV PORT=8000
 EXPOSE 8000
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["sh", "-c", "if [ -f server.js ]; then node server.js; elif [ -f index.js ]; then node index.js; elif [ -f app.js ]; then node app.js; else npm start; fi"]

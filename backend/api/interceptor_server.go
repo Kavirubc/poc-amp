@@ -130,6 +130,7 @@ type envoyPayload struct {
 	RequestBody    string `json:"request_body"`
 	ResponseStatus int32  `json:"response_status"`
 	ResponseBody   string `json:"response_body"`
+	SourceIP       string `json:"source_ip,omitempty"` // Container IP from iptables transparent proxy
 }
 
 func HandleEnvoyTransaction(interceptorSvc *InterceptorServer) http.HandlerFunc {
