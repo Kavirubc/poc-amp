@@ -12,20 +12,16 @@ CN = AMP Proxy Wildcard
 subjectAltName = @alt_names
 
 [alt_names]
-# Wildcard entries for broad interception coverage
-DNS.1 = *
-DNS.2 = *.*
-DNS.3 = *.*.*
-DNS.4 = *.*.*.*
-# Common AI/API providers (explicit for client compatibility)
-DNS.5 = localhost
-DNS.6 = *.openai.com
-DNS.7 = *.anthropic.com
-DNS.8 = *.googleapis.com
-DNS.9 = *.google.com
-DNS.10 = *.stripe.com
-DNS.11 = *.github.com
-DNS.12 = *.httpbin.org
-DNS.13 = *.amazonaws.com
-DNS.14 = *.azure.com
-DNS.15 = *.huggingface.co
+# Valid wildcard SANs: single left-most label only (RFC 9525 / CA/B Forum).
+# Generic entries like *, *.*, *.*.* are not valid DNS wildcards in X.509/TLS.
+DNS.1 = localhost
+DNS.2 = *.openai.com
+DNS.3 = *.anthropic.com
+DNS.4 = *.googleapis.com
+DNS.5 = *.google.com
+DNS.6 = *.stripe.com
+DNS.7 = *.github.com
+DNS.8 = *.httpbin.org
+DNS.9 = *.amazonaws.com
+DNS.10 = *.azure.com
+DNS.11 = *.huggingface.co

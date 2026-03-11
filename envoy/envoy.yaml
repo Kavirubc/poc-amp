@@ -250,7 +250,9 @@ static_resources:
                       res_body = body:getBytes(0, body:length())
                     end
 
-                    local payload = '{"agent_id":"' .. json_escape(source_ip) .. '","session_id":"iptables-session","method":"' .. json_escape(method) .. '","url":"' .. json_escape(url) .. '","request_body":"' .. json_escape(req_body) .. '","response_status":' .. status .. ',"response_body":"' .. json_escape(res_body) .. '","source_ip":"' .. json_escape(source_ip) .. '"}'
+                    -- agent_id is intentionally omitted here; the backend resolves agent identity
+                    -- from source_ip using the Docker API to keep agent_id stable across restarts.
+                    local payload = '{"session_id":"iptables-session","method":"' .. json_escape(method) .. '","url":"' .. json_escape(url) .. '","request_body":"' .. json_escape(req_body) .. '","response_status":' .. status .. ',"response_body":"' .. json_escape(res_body) .. '","source_ip":"' .. json_escape(source_ip) .. '"}'
 
                     response_handle:logInfo(">>> [transparent] Dispatching to backend: " .. method .. " " .. url .. " -> HTTP " .. status .. " (from " .. source_ip .. ")")
 
