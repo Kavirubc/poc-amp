@@ -6,12 +6,13 @@
 
 set -e
 
-# Run iptables init to set up transparent proxy
+# Run iptables init to set up transparent proxy — fail closed if missing or failing
 if [ -f /usr/local/bin/iptables-init.sh ]; then
     echo "[entrypoint] Setting up iptables transparent proxy..."
-    /usr/local/bin/iptables-init.sh || echo "[entrypoint] WARNING: iptables setup failed, continuing without transparent proxy"
+    /usr/local/bin/iptables-init.sh
 else
-    echo "[entrypoint] No iptables-init.sh found, skipping transparent proxy setup"
+    echo "[entrypoint] ERROR: iptables-init.sh missing; refusing to start without transparent proxy" >&2
+    exit 1
 fi
 
 # Execute the original command

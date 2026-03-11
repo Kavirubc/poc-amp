@@ -78,12 +78,22 @@ func (d *DockerService) ensureNetwork() error {
 }
 
 func (d *DockerService) BuildImage(ctx context.Context, agentID, repoPath string, agentType models.AgentType) (string, error) {
+	// Create a dedicated subdirectory for AMP-injected build assets so they
+	// never overwrite files that already exist in the agent repo.
+	ampBuildDir := filepath.Join(repoPath, ".amp-assets")
+	if err := os.MkdirAll(ampBuildDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create amp build dir: %w", err)
+	}
+	defer os.RemoveAll(ampBuildDir)
+
 	templateName := fmt.Sprintf("templates/Dockerfile.%s", agentType)
 	templateContent, err := templateFS.ReadFile(templateName)
 	if err != nil {
 		return "", fmt.Errorf("failed to read dockerfile template: %w", err)
 	}
 
+	// Dockerfile goes at the repo root (Docker requires it there), but we use a
+	// unique name to avoid collisions with any existing Dockerfile in the repo.
 	dockerfilePath := filepath.Join(repoPath, "Dockerfile.amp")
 	if err := os.WriteFile(dockerfilePath, templateContent, 0644); err != nil {
 		return "", fmt.Errorf("failed to write dockerfile: %w", err)
@@ -95,33 +105,30 @@ func (d *DockerService) BuildImage(ctx context.Context, agentID, repoPath string
 		return "", fmt.Errorf("failed to read CA certificate: %w", err)
 	}
 
-	caCertPath := filepath.Join(repoPath, "ca.crt")
+	caCertPath := filepath.Join(ampBuildDir, "ca.crt")
 	if err := os.WriteFile(caCertPath, caCertContent, 0644); err != nil {
 		return "", fmt.Errorf("failed to write CA certificate: %w", err)
 	}
-	defer os.Remove(caCertPath)
 
 	// Copy iptables-init.sh for transparent proxy setup
 	iptablesContent, err := templateFS.ReadFile("templates/iptables-init.sh")
 	if err != nil {
 		return "", fmt.Errorf("failed to read iptables-init.sh: %w", err)
 	}
-	iptablesPath := filepath.Join(repoPath, "iptables-init.sh")
+	iptablesPath := filepath.Join(ampBuildDir, "iptables-init.sh")
 	if err := os.WriteFile(iptablesPath, iptablesContent, 0755); err != nil {
 		return "", fmt.Errorf("failed to write iptables-init.sh: %w", err)
 	}
-	defer os.Remove(iptablesPath)
 
 	// Copy entrypoint.sh wrapper
 	entrypointContent, err := templateFS.ReadFile("templates/entrypoint.sh")
 	if err != nil {
 		return "", fmt.Errorf("failed to read entrypoint.sh: %w", err)
 	}
-	entrypointPath := filepath.Join(repoPath, "entrypoint.sh")
+	entrypointPath := filepath.Join(ampBuildDir, "entrypoint.sh")
 	if err := os.WriteFile(entrypointPath, entrypointContent, 0755); err != nil {
 		return "", fmt.Errorf("failed to write entrypoint.sh: %w", err)
 	}
-	defer os.Remove(entrypointPath)
 
 	tar, err := archive.TarWithOptions(repoPath, &archive.TarOptions{})
 	if err != nil {
@@ -220,7 +227,10 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 		RestartPolicy: container.RestartPolicy{
 			Name: "unless-stopped",
 		},
-		// NET_ADMIN and NET_RAW required for iptables transparent proxy
+		// NET_ADMIN and NET_RAW are needed by entrypoint.sh to apply iptables DNAT rules
+		// before the agent process starts (via exec). These capabilities persist on the
+		// long-running agent process; a future improvement is to use a separate short-lived
+		// privileged init container or capsh to drop them after bootstrap.
 		CapAdd: []string{"NET_ADMIN", "NET_RAW"},
 	}
 

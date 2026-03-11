@@ -9,13 +9,19 @@
 set -e
 
 ENVOY_PORT=${ENVOY_TRANSPARENT_PORT:-10443}
+ENVOY_RETRIES=${ENVOY_WAIT_SECONDS:-30}
 
-# Resolve Envoy's IP on the Docker network
-ENVOY_IP=$(getent hosts envoy | awk '{print $1}')
+# Resolve Envoy's IP on the Docker network with retry to handle startup races
+ENVOY_IP=""
+for _ in $(seq 1 "$ENVOY_RETRIES"); do
+    ENVOY_IP=$(getent hosts envoy | awk '{print $1; exit}')
+    [ -n "$ENVOY_IP" ] && break
+    sleep 1
+done
 
 if [ -z "$ENVOY_IP" ]; then
-    echo "[iptables-init] WARNING: Could not resolve 'envoy' hostname. Transparent proxy will NOT be active."
-    exit 0
+    echo "[iptables-init] ERROR: Could not resolve 'envoy' after ${ENVOY_RETRIES}s; refusing to start without transparent proxy." >&2
+    exit 1
 fi
 
 echo "[iptables-init] Envoy resolved to ${ENVOY_IP}"

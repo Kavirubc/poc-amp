@@ -182,7 +182,7 @@ We use `DNAT` because Envoy runs as a standalone container on the same Docker ne
 
 Since each agent container has a unique IP on the Docker bridge network, Envoy's Lua filter captures the **source IP** of each intercepted connection. The Go backend can map this IP back to an agent ID using the Docker API.
 
-```
+```text
 Agent container 172.18.0.5 → Envoy sees source 172.18.0.5 → Backend maps to agent "agent-abc123"
 ```
 

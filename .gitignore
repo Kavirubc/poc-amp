@@ -39,3 +39,7 @@ workspace/*
 postgres_data/
 
 .claude/
+
+# Private TLS/CA keys — never commit key material; load from a secret store at runtime
+envoy/certs/*.key
+envoy/certs/*.srl
