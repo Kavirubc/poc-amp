@@ -135,19 +135,30 @@ static_resources:
 
                     response_handle:logInfo(">>> Dispatching to backend: " .. method .. " " .. url .. " -> HTTP " .. status)
 
-                    local resp_headers, resp_body = response_handle:httpCall(
-                      "backend_cluster",
-                      {
-                        [":method"] = "POST",
-                        [":path"] = "/internal/envoy/transactions",
-                        [":authority"] = "backend",
-                        ["content-type"] = "application/json"
-                      },
-                      payload,
-                      5000)
+                    -- TODO: Envoy Lua httpCall is synchronous from the HTTP pipeline's
+                    -- perspective (it holds the response while the call is in-flight).
+                    -- For production, replace this with Envoy's gRPC Access Log Service
+                    -- (envoy.access_loggers.http_grpc) or an OTLP sink so telemetry is
+                    -- fully decoupled from the response path.
+                    -- Timeout is capped at 1 s; pcall ensures backend failures never
+                    -- surface as client-visible errors.
+                    local ok, resp_headers = pcall(function()
+                      return response_handle:httpCall(
+                        "backend_cluster",
+                        {
+                          [":method"] = "POST",
+                          [":path"] = "/internal/envoy/transactions",
+                          [":authority"] = "backend",
+                          ["content-type"] = "application/json"
+                        },
+                        payload,
+                        1000)
+                    end)
 
-                    if resp_headers then
+                    if ok and resp_headers then
                       response_handle:logInfo("<<< Backend response: " .. (resp_headers[":status"] or "nil"))
+                    elseif not ok then
+                      response_handle:logWarn("<<< Backend telemetry call failed (non-fatal): " .. tostring(resp_headers))
                     end
                   end
           - name: envoy.filters.http.dynamic_forward_proxy
@@ -161,14 +172,38 @@ static_resources:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 
   # Transparent TLS listener — receives iptables DNAT traffic from agent containers
-  # Agent outbound HTTPS (port 443) is DNAT'd to this listener on port 10443
+  # Agent outbound HTTPS (port 443) is DNAT'd to this listener on port 10443.
+  # SNI inspection restricts MITM to destinations covered by our cert SANs;
+  # all other TLS connections are forwarded raw to their original destination.
   - name: transparent_tls_listener
     address:
       socket_address:
         address: 0.0.0.0
         port_value: 10443
+    listener_filters:
+    # Recover the pre-DNAT destination so the passthrough chain can forward correctly
+    - name: envoy.filters.listener.original_dst
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
+    # Extract SNI so filter_chain_match can route per destination
+    - name: envoy.filters.listener.tls_inspector
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
     filter_chains:
-    - transport_socket:
+    # MITM chain: only intercept destinations covered by our cert's SANs
+    - filter_chain_match:
+        server_names:
+        - "*.openai.com"
+        - "*.anthropic.com"
+        - "*.googleapis.com"
+        - "*.google.com"
+        - "*.stripe.com"
+        - "*.github.com"
+        - "*.httpbin.org"
+        - "*.amazonaws.com"
+        - "*.azure.com"
+        - "*.huggingface.co"
+      transport_socket:
         name: envoy.transport_sockets.tls
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
@@ -256,19 +291,30 @@ static_resources:
 
                     response_handle:logInfo(">>> [transparent] Dispatching to backend: " .. method .. " " .. url .. " -> HTTP " .. status .. " (from " .. source_ip .. ")")
 
-                    local resp_headers, resp_body = response_handle:httpCall(
-                      "backend_cluster",
-                      {
-                        [":method"] = "POST",
-                        [":path"] = "/internal/envoy/transactions",
-                        [":authority"] = "backend",
-                        ["content-type"] = "application/json"
-                      },
-                      payload,
-                      5000)
+                    -- TODO: Envoy Lua httpCall is synchronous from the HTTP pipeline's
+                    -- perspective (it holds the response while the call is in-flight).
+                    -- For production, replace this with Envoy's gRPC Access Log Service
+                    -- (envoy.access_loggers.http_grpc) or an OTLP sink so telemetry is
+                    -- fully decoupled from the response path.
+                    -- Timeout is capped at 1 s; pcall ensures backend failures never
+                    -- surface as client-visible errors.
+                    local ok, resp_headers = pcall(function()
+                      return response_handle:httpCall(
+                        "backend_cluster",
+                        {
+                          [":method"] = "POST",
+                          [":path"] = "/internal/envoy/transactions",
+                          [":authority"] = "backend",
+                          ["content-type"] = "application/json"
+                        },
+                        payload,
+                        1000)
+                    end)
 
-                    if resp_headers then
+                    if ok and resp_headers then
                       response_handle:logInfo("<<< Backend response: " .. (resp_headers[":status"] or "nil"))
+                    elseif not ok then
+                      response_handle:logWarn("<<< Backend telemetry call failed (non-fatal): " .. tostring(resp_headers))
                     end
                   end
           - name: envoy.filters.http.dynamic_forward_proxy
@@ -280,6 +326,18 @@ static_resources:
           - name: envoy.filters.http.router
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+    # Passthrough chain: unknown destinations are forwarded as raw TCP without MITM.
+    # The tls_inspector reads SNI but does not decrypt; original_dst gives the real IP:port.
+    - transport_socket:
+        name: envoy.transport_sockets.raw_buffer
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer
+      filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: transparent_passthrough
+          cluster: original_dst_cluster
 
   clusters:
   - name: internal_tls_interception
@@ -293,6 +351,12 @@ static_resources:
             address:
               envoy_internal_address:
                 server_listener_name: internal_tls_interception
+
+  # Cluster for passthrough: forwards raw TCP to the original pre-DNAT destination
+  - name: original_dst_cluster
+    connect_timeout: 5s
+    type: ORIGINAL_DST
+    lb_policy: CLUSTER_PROVIDED
 
   - name: dynamic_forward_proxy_cluster
     connect_timeout: 5s
