@@ -58,6 +58,7 @@ services:
       - ./envoy/certs:/etc/envoy/certs:ro
     ports:
       - "10000:10000"
+      - "10443:10443"
       - "9901:9901"
     networks:
       - amp-network

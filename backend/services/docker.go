@@ -101,6 +101,28 @@ func (d *DockerService) BuildImage(ctx context.Context, agentID, repoPath string
 	}
 	defer os.Remove(caCertPath)
 
+	// Copy iptables-init.sh for transparent proxy setup
+	iptablesContent, err := templateFS.ReadFile("templates/iptables-init.sh")
+	if err != nil {
+		return "", fmt.Errorf("failed to read iptables-init.sh: %w", err)
+	}
+	iptablesPath := filepath.Join(repoPath, "iptables-init.sh")
+	if err := os.WriteFile(iptablesPath, iptablesContent, 0755); err != nil {
+		return "", fmt.Errorf("failed to write iptables-init.sh: %w", err)
+	}
+	defer os.Remove(iptablesPath)
+
+	// Copy entrypoint.sh wrapper
+	entrypointContent, err := templateFS.ReadFile("templates/entrypoint.sh")
+	if err != nil {
+		return "", fmt.Errorf("failed to read entrypoint.sh: %w", err)
+	}
+	entrypointPath := filepath.Join(repoPath, "entrypoint.sh")
+	if err := os.WriteFile(entrypointPath, entrypointContent, 0755); err != nil {
+		return "", fmt.Errorf("failed to write entrypoint.sh: %w", err)
+	}
+	defer os.Remove(entrypointPath)
+
 	tar, err := archive.TarWithOptions(repoPath, &archive.TarOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to create tar archive: %w", err)
@@ -176,11 +198,11 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 	envVars = append(envVars, fmt.Sprintf("PORT=%d", 8000))
 	envVars = append(envVars, fmt.Sprintf("AGENT_ID=%s", agent.ID))
 	envVars = append(envVars, "AMP_URL=http://backend:8080")
-	envVars = append(envVars, "HTTP_PROXY=http://envoy:10000")
-	envVars = append(envVars, "HTTPS_PROXY=http://envoy:10000")
+	// CA trust env vars (needed for TLS verification through Envoy MITM)
 	envVars = append(envVars, "REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
 	envVars = append(envVars, "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
 	envVars = append(envVars, "SSL_CERT_FILE=/usr/local/share/ca-certificates/amp-proxy-ca.crt")
+	// Note: HTTP_PROXY/HTTPS_PROXY removed — iptables DNAT handles traffic redirection transparently
 
 	config := &container.Config{
 		Image:        fmt.Sprintf("amp-agent-%s:latest", agent.ID),
@@ -198,6 +220,8 @@ func (d *DockerService) StartContainer(ctx context.Context, agent *models.Agent,
 		RestartPolicy: container.RestartPolicy{
 			Name: "unless-stopped",
 		},
+		// NET_ADMIN and NET_RAW required for iptables transparent proxy
+		CapAdd: []string{"NET_ADMIN", "NET_RAW"},
 	}
 
 	networkConfig := &network.NetworkingConfig{

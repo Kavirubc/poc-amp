@@ -21,20 +21,29 @@ req_extensions = req_ext
 distinguished_name = dn
 
 [dn]
-CN = *
+CN = AMP Proxy Wildcard
 
 [req_ext]
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = localhost
-DNS.2 = httpbin.org
-DNS.3 = *.httpbin.org
-DNS.4 = api.openai.com
-DNS.5 = *.openai.com
-DNS.6 = api.github.com
-DNS.7 = *.github.com
-DNS.8 = *.stripe.com
+# Wildcard entries for broad interception coverage
+DNS.1 = *
+DNS.2 = *.*
+DNS.3 = *.*.*
+DNS.4 = *.*.*.*
+# Common AI/API providers (explicit for client compatibility)
+DNS.5 = localhost
+DNS.6 = *.openai.com
+DNS.7 = *.anthropic.com
+DNS.8 = *.googleapis.com
+DNS.9 = *.google.com
+DNS.10 = *.stripe.com
+DNS.11 = *.github.com
+DNS.12 = *.httpbin.org
+DNS.13 = *.amazonaws.com
+DNS.14 = *.azure.com
+DNS.15 = *.huggingface.co
 EOF
 
 openssl req -new -key server.key -out server.csr -config openssl.cnf

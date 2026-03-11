@@ -4,6 +4,8 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    ca-certificates \
+    iptables \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt* ./
@@ -11,11 +13,17 @@ RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
 
 # Inject AMP Proxy CA Certificate
 COPY ca.crt /usr/local/share/ca-certificates/amp-proxy-ca.crt
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && update-ca-certificates
+RUN update-ca-certificates
+
+# Inject AMP transparent proxy scripts
+COPY iptables-init.sh /usr/local/bin/iptables-init.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/iptables-init.sh /usr/local/bin/entrypoint.sh
 
 COPY . .
 
 ENV PORT=8000
 EXPOSE 8000
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["sh", "-c", "if [ -f main.py ]; then python main.py; elif [ -f app.py ]; then python app.py; elif [ -f run.py ]; then python run.py; else uvicorn main:app --host 0.0.0.0 --port ${PORT}; fi"]
